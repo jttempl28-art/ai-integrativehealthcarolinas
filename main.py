@@ -218,6 +218,44 @@ def add_embedding(new_embedding):
     embeddings.append(new_embedding)
     with open(EMBEDDINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(embeddings, f, ensure_ascii=False, indent=2)
+# Cosine similarity helper
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.get_json()
+    message = data.get("message", "")
+    if not message:
+        return jsonify({"error": "No message provided"}), 400
+
+    try:
+        # 1️⃣ Convert user message to embedding
+        response = client.embeddings.create(
+            model="text-embedding-3-large",
+            input=message
+        )
+        message_embedding = response.data[0].embedding
+
+        # 2️⃣ Find top relevant embeddings
+        top_k = 15  # number of embeddings to reference
+        scores = [(cosine_similarity(message_embedding, e["embedding"]), e["text"]) for e in embeddings]
+        top_matches = sorted(scores, key=lambda x: x[0], reverse=True)[:top_k]
+
+        # 3️⃣ Combine top matches as context
+        context_text = "\n\n".join([text for _, text in top_matches])
+        prompt = f"Use the following context to answer the question:\n{context_text}\n\nQuestion: {message}"
+
+        # 4️⃣ Send to GPT
+        completion = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return jsonify({"reply": completion.choices[0].message.content})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
