@@ -235,7 +235,7 @@ def upload_file():
 
         # 2️⃣ Create embedding
         response = client.embeddings.create(
-            model="text-embedding-3-small",
+            model="text-embedding-3-large",
             input=redacted_text
         )
         embedding_vector = response.data[0].embedding
