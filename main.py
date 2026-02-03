@@ -205,7 +205,7 @@ def normalize_and_redact(pdf_path):
 app = Flask(__name__)
 CORS(app)
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+client = openai(api_key=os.environ.get("OPENAI_API_KEY"))
 EMBEDDINGS_FILE = "embeddings.json"
 
 
