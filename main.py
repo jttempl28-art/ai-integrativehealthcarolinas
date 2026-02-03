@@ -18,9 +18,24 @@ openai.api_key = os.environ.get("OPENAI_API_KEY")
 EMBEDDINGS_FILE = "embeddings.npy"
 CHUNKS_FILE = "chart_chunks.npy"
 SYSTEM_PROMPT_FILE = "system_prompt.txt"
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 TOP_K = 5
 
+# ---------------- Load existing embeddings ----------------
+if os.path.exists(CHUNKS_FILE):
+    chart_chunks = np.load(CHUNKS_FILE, allow_pickle=True).tolist()
+else:
+    chart_chunks = []
+
+if os.path.exists(EMBEDDINGS_FILE):
+    embeddings = np.load(EMBEDDINGS_FILE)
+else:
+    embeddings = []  # adjust dimension if needed
+if os.path.exists(SYSTEM_PROMPT_FILE):
+    with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
+        system_prompt = f.read()
+else:
+    system_prompt = "You are a helpful assistant."
 
 counter = 1
 
@@ -47,7 +62,7 @@ def normalize_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-def chunk_text(text, max_chars=100_000):
+def chunk_text(text, max_chars=1500):
     chunk = []
     size = 0
     for line in text.splitlines(keepends=True):
@@ -209,6 +224,9 @@ def normalize_and_redact(pdf_path):
     return redacted_text
 
 
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
 # ---------------- Flask App ----------------
 
 app = Flask(__name__)
@@ -247,7 +265,11 @@ def upload_file():
 
         # 4️⃣ Append to existing arrays
         chart_chunks += new_chunks
-        embeddings = np.vstack([embeddings, new_embeddings])
+        new_embeddings = np.array(new_embeddings, dtype=np.float32)
+        if embeddings.shape[0] == 0:
+            embeddings = new_embeddings
+        else:
+            embeddings = np.vstack([embeddings, new_embeddings])
 
         # 5️⃣ Save back to files
         np.save(CHUNKS_FILE, chart_chunks, allow_pickle=True)
