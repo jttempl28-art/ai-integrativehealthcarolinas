@@ -9,7 +9,7 @@ import unicodedata
 from datetime import datetime
 import pdfplumber
 import json
-
+import numpy as np
 
 # Your redaction imports
 
