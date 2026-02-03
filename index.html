@@ -1,29 +1,39 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Custom GPT Chat</title>
+  <title>IntegrativeHealthAI</title>
   <style>
-    body { font-family: Arial; max-width: 600px; margin: 20px auto; }
-    #chat { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: scroll; }
+    body { font-family: Arial; max-width: 700px; margin: 20px auto; }
+    #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; }
     #input { width: 80%; }
     #send { width: 18%; }
     .message { margin: 5px 0; }
     .user { color: blue; }
     .bot { color: green; }
+    #uploadBtn { margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h1>Custom GPT Chat</h1>
+  <h1>IntegrativeHealthAI – Staff Assistant</h1>
+
+  <!-- Chat -->
   <div id="chat"></div>
   <input type="text" id="input" placeholder="Type your message">
   <button id="send">Send</button>
 
+  <hr>
+
+  <!-- File Upload -->
+  <input type="file" id="fileInput">
+  <button id="uploadBtn">Upload & Redact</button>
+
   <script>
+    const backendUrl = "https://loyal-surprise-production.up.railway.app";
+
+    // ---------------- Chat ----------------
     const chatDiv = document.getElementById("chat");
     const input = document.getElementById("input");
     const send = document.getElementById("send");
-
-    const backendUrl = "https://loyal-surprise-production.up.railway.app/chat"; // <-- Replace with Railway URL
 
     function addMessage(text, sender) {
       const div = document.createElement("div");
@@ -36,22 +46,18 @@
     async function sendMessage() {
       const message = input.value.trim();
       if (!message) return;
-
       addMessage(message, "user");
       input.value = "";
 
       try {
-        const response = await fetch(backendUrl, {
+        const response = await fetch(`${backendUrl}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message })
         });
         const data = await response.json();
-        if (data.reply) {
-          addMessage(data.reply, "bot");
-        } else {
-          addMessage("Error: " + (data.error || "Unknown error"), "bot");
-        }
+        if (data.reply) addMessage(data.reply, "bot");
+        else addMessage("Error: " + (data.error || "Unknown error"), "bot");
       } catch (err) {
         addMessage("Network error: " + err.message, "bot");
       }
@@ -59,6 +65,39 @@
 
     send.addEventListener("click", sendMessage);
     input.addEventListener("keydown", e => { if (e.key === "Enter") sendMessage(); });
+
+    // ---------------- File Upload ----------------
+    const uploadBtn = document.getElementById("uploadBtn");
+    const fileInput = document.getElementById("fileInput");
+
+    uploadBtn.addEventListener("click", async () => {
+      const file = fileInput.files[0];
+      if (!file) return alert("Select a file first");
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const response = await fetch(`${backendUrl}/upload`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          return alert("Error: " + (errData.error || response.statusText));
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "redacted_" + file.name;
+        a.click();
+      } catch (err) {
+        alert("Network error: " + err.message);
+      }
+    });
   </script>
 </body>
 </html>
