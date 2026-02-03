@@ -268,7 +268,7 @@ def chat():
 
     try:
         # 1️⃣ Convert user message to embedding
-        response = client.embeddings.create(
+        response = openai.embeddings.create(
             model="text-embedding-3-large",
             input=message
         )
@@ -284,7 +284,7 @@ def chat():
         prompt = f"Use the following context to answer the question:\n{context_text}\n\nQuestion: {message}"
 
         # 4️⃣ Send to GPT
-        completion = client.chat.completions.create(
+        completion = openai.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "system", "content": system_prompt},
                      {"roles": "user", "content": prompt}
@@ -311,7 +311,7 @@ def upload_file():
         redacted_text = normalize_and_redact(input_path)
 
         # 2️⃣ Create embedding
-        response = client.embeddings.create(
+        response = openai.embeddings.create(
             model="text-embedding-3-large",
             input=redacted_text
         )
