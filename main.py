@@ -8,6 +8,7 @@ import re
 import unicodedata
 from datetime import datetime
 import pdfplumber
+import json
 
 
 # Your redaction imports
