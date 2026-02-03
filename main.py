@@ -4,10 +4,14 @@ import openai
 import os
 import tempfile
 import shutil
+import re
+import unicodedata
+from datetime import datetime
+import pdfplumber
+
 
 # Your redaction imports
-import pdfplumber, re, unicodedata
-from datetime import datetime
+
 
 counter = 1
 
