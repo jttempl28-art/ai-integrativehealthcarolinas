@@ -13,6 +13,14 @@ import numpy as np
 
 # Your redaction imports
 
+# ----------------- Config -----------------
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+EMBEDDINGS_FILE = "embeddings.npy"
+CHUNKS_FILE = "chart_chunks.npy"
+SYSTEM_PROMPT_FILE = "system_prompt.txt"
+EMBEDDING_MODEL = "text-embedding-3-small"
+TOP_K = 5
+
 
 counter = 1
 
@@ -206,139 +214,106 @@ def normalize_and_redact(pdf_path):
 app = Flask(__name__)
 CORS(app)
 
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-EMBEDDINGS_FILE = "embeddings.json"
 
+# ----------------- Routes -----------------
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    global chart_chunks, embeddings
 
-SYSTEM_PROMPT_FILE = "system_prompt.txt"
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
 
-# Load system prompt at startup (default if file doesn't exist)
-if os.path.exists(SYSTEM_PROMPT_FILE):
-    with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
-        system_prompt = f.read()
-else:
-    system_prompt = """You are IntegrativeHealthAI, a staff assistant for Integrative Health Carolinas.
-- Always be polite and professional.
-- Only reference information from uploaded, redacted documents.
-- Never reveal PII.
-- Keep answers concise and actionable.
-"""
-    with open(SYSTEM_PROMPT_FILE, "w", encoding="utf-8") as f:
-        f.write(system_prompt)
+    file = request.files["file"]
+    if not file.filename.endswith(".pdf"):
+        return jsonify({"error": "Only PDFs supported"}), 400
 
-# Endpoint to get current system prompt
-@app.route("/settings", methods=["GET"])
-def get_settings():
-    return jsonify({"system_prompt": system_prompt})
+    try:
+        # 1️⃣ Read PDF and extract text
+        pdf_bytes = file.read()
+        pdf_stream = io.BytesIO(pdf_bytes)
+        text = extract_text_columns(pdf_stream)
 
-# Endpoint to update system prompt
-@app.route("/settings", methods=["POST"])
-def update_settings():
-    global system_prompt
-    data = request.get_json()
-    new_prompt = data.get("system_prompt")
-    if not new_prompt:
-        return jsonify({"error": "No prompt provided"}), 400
+        # 2️⃣ Chunk text
+        new_chunks = chunk_text(text)
+        if not new_chunks:
+            return jsonify({"error": "No text extracted"}), 400
 
-    system_prompt = new_prompt
-    with open(SYSTEM_PROMPT_FILE, "w", encoding="utf-8") as f:
-        f.write(system_prompt)
-    return jsonify({"success": True})
+        # 3️⃣ Generate embeddings
+        new_embeddings = []
+        for chunk in new_chunks:
+            emb = openai.Embeddings.create(model=EMBEDDING_MODEL, input=chunk)
+            new_embeddings.append(emb["data"][0]["embedding"])
+        new_embeddings = np.array(new_embeddings)
 
-# Load embeddings at startup
-if os.path.exists(EMBEDDINGS_FILE):
-    with open(EMBEDDINGS_FILE, "r", encoding="utf-8") as f:
-        embeddings = json.load(f)
-else:
-    embeddings = []
+        # 4️⃣ Append to existing arrays
+        chart_chunks += new_chunks
+        embeddings = np.vstack([embeddings, new_embeddings])
 
-def add_embedding(new_embedding):
-    embeddings.append(new_embedding)
-    with open(EMBEDDINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(embeddings, f, ensure_ascii=False, indent=2)
-# Cosine similarity helper
-def cosine_similarity(a, b):
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+        # 5️⃣ Save back to files
+        np.save(CHUNKS_FILE, chart_chunks, allow_pickle=True)
+        np.save(EMBEDDINGS_FILE, embeddings)
+
+        return jsonify({"message": f"File processed and {len(new_chunks)} chunks added."})
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to process PDF: {str(e)}"}), 500
 
 @app.route("/chat", methods=["POST"])
 def chat():
+    global chart_chunks, embeddings, system_prompt
+
     data = request.get_json()
-    message = data.get("message", "")
-    if not message:
+    if not data or "message" not in data:
         return jsonify({"error": "No message provided"}), 400
 
+    user_message = data["message"]
+
     try:
-        # 1️⃣ Convert user message to embedding
-        response = openai.embeddings.create(
-            model="text-embedding-3-large",
-            input=message
-        )
-        message_embedding = response.data[0].embedding
+        # 1️⃣ Generate embedding for query
+        query_embed = openai.Embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=user_message
+        )["data"][0]["embedding"]
+        query_vec = np.array(query_embed)
 
-        # 2️⃣ Find top relevant embeddings
-        top_k = 15  # number of embeddings to reference
-        scores = [(cosine_similarity(message_embedding, e["embedding"]), e["text"]) for e in embeddings]
-        top_matches = sorted(scores, key=lambda x: x[0], reverse=True)[:top_k]
+        # 2️⃣ Compute cosine similarity with all embeddings
+        sims = np.array([cosine_similarity(query_vec, e) for e in embeddings])
+        top_idx = sims.argsort()[-TOP_K:][::-1]
+        context_chunks = [chart_chunks[i] for i in top_idx]
 
-        # 3️⃣ Combine top matches as context
-        context_text = "\n\n".join([text for _, text in top_matches])
-        prompt = f"Use the following context to answer the question:\n{context_text}\n\nQuestion: {message}"
+        # 3️⃣ Build messages
+        context_text = "\n\n".join(context_chunks)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {user_message}"}
+        ]
 
-        # 4️⃣ Send to GPT
-        completion = openai.chat.completions.create(
+        # 4️⃣ Ask GPT
+        completion = openai.ChatCompletion.create(
             model="gpt-4",
-            messages=[{"role": "system", "content": system_prompt},
-                     {"role": "user", "content": prompt}
-          ]
+            messages=messages
         )
+        reply = completion.choices[0].message.content
 
-        return jsonify({"reply": completion.choices[0].message.content})
+        return jsonify({"reply": reply})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/upload", methods=["POST"])
-def upload_file():
-    uploaded_file = request.files.get("file")
-    if not uploaded_file:
-        return jsonify({"error": "No file uploaded"}), 400
+@app.route("/set_prompt", methods=["POST"])
+def set_prompt():
+    global system_prompt
+    data = request.get_json()
+    if not data or "prompt" not in data:
+        return jsonify({"error": "No prompt provided"}), 400
+    system_prompt = data["prompt"]
+    with open(SYSTEM_PROMPT_FILE, "w", encoding="utf-8") as f:
+        f.write(system_prompt)
+    return jsonify({"message": "System prompt updated."})
 
-    temp_dir = tempfile.mkdtemp()
-    input_path = os.path.join(temp_dir, uploaded_file.filename)
-    uploaded_file.save(input_path)
-
-    try:
-        # 1️⃣ Redact PDF
-        redacted_text = normalize_and_redact(input_path)
-
-        # 2️⃣ Create embedding
-        response = openai.embeddings.create(
-            model="text-embedding-3-large",
-            input=redacted_text
-        )
-        embedding_vector = response.data[0].embedding
-
-        # 3️⃣ Append to embeddings file
-        add_embedding({
-            "filename": uploaded_file.filename,
-            "text": redacted_text,
-            "embedding": embedding_vector
-        })
-
-        # 4️⃣ Return redacted text as TXT
-        redacted_filename = f"redacted_{os.path.splitext(uploaded_file.filename)[0]}.txt"
-        redacted_path = os.path.join(temp_dir, redacted_filename)
-        with open(redacted_path, "w", encoding="utf-8") as f:
-            f.write(redacted_text)
-
-        response_file = send_file(redacted_path, as_attachment=True)
-    except Exception as e:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return jsonify({"error": f"Failed to process PDF: {str(e)}"}), 400
-
-    shutil.rmtree(temp_dir, ignore_errors=True)
-    return response_file
-# ---------------- Main ----------------
+# ----------------- Run -----------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
+
+
