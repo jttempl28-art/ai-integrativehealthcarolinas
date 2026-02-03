@@ -11,6 +11,7 @@
     .user { color: blue; }
     .bot { color: green; }
     #uploadBtn { margin-top: 10px; }
+    #statusPrompt { color: green; margin-top: 5px; }
   </style>
 </head>
 <body>
@@ -26,6 +27,14 @@
   <!-- File Upload -->
   <input type="file" id="fileInput">
   <button id="uploadBtn">Upload & Redact</button>
+
+  <hr>
+
+  <!-- System Prompt Settings -->
+  <h2>Settings</h2>
+  <textarea id="systemPrompt" rows="6" style="width:100%;"></textarea>
+  <button id="savePrompt">Save Prompt</button>
+  <p id="statusPrompt"></p>
 
   <script>
     const backendUrl = "https://loyal-surprise-production.up.railway.app";
@@ -96,6 +105,46 @@
         a.click();
       } catch (err) {
         alert("Network error: " + err.message);
+      }
+    });
+
+    // ---------------- System Prompt ----------------
+    const systemPromptTextarea = document.getElementById("systemPrompt");
+    const savePromptBtn = document.getElementById("savePrompt");
+    const statusPrompt = document.getElementById("statusPrompt");
+
+    // Load current system prompt
+    async function loadPrompt() {
+      try {
+        const response = await fetch(`${backendUrl}/settings`);
+        const data = await response.json();
+        systemPromptTextarea.value = data.system_prompt || "";
+      } catch (err) {
+        console.error("Failed to load system prompt:", err);
+      }
+    }
+    loadPrompt();
+
+    // Save system prompt
+    savePromptBtn.addEventListener("click", async () => {
+      const newPrompt = systemPromptTextarea.value.trim();
+      if (!newPrompt) return alert("Prompt cannot be empty");
+
+      statusPrompt.textContent = "Saving...";
+      try {
+        const response = await fetch(`${backendUrl}/settings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ system_prompt: newPrompt })
+        });
+        const data = await response.json();
+        if (data.success) {
+          statusPrompt.textContent = "Prompt saved successfully!";
+        } else {
+          statusPrompt.textContent = "Error saving prompt: " + (data.error || "Unknown error");
+        }
+      } catch (err) {
+        statusPrompt.textContent = "Network error: " + err.message;
       }
     });
   </script>
