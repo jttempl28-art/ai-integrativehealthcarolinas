@@ -24,6 +24,91 @@ street_suffixes = [
 # Place all your normalize_and_redact and helper functions here
 # (generate_safe_filename, normalize_text, chunk_text, extract_text_columns, normalize_and_redact, etc.)
 # Make sure you also define `counter`, `street_suffixes`, and `log` function if used
+def generate_safe_filename():
+    return f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.txt"
+
+def normalize_text(text):
+    if not text:
+        return ""
+    text = unicodedata.normalize('NFKD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = re.sub(r'[\u200B-\u200D\uFEFF]', '', text)
+    text = re.sub(r'[\x00-\x1F\x7F]', '', text)
+    text = re.sub(r'[_–—]+', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def chunk_text(text, max_chars=100_000):
+    chunk = []
+    size = 0
+    for line in text.splitlines(keepends=True):
+        chunk.append(line)
+        size += len(line)
+        if size >= max_chars:
+            yield "".join(chunk)
+            chunk = []
+            size = 0
+    if chunk:
+        yield "".join(chunk)
+
+def extract_text_columns(pdf_path, y_tolerance=1, gap_threshold=40, right_start_threshold=300):
+    pages_out = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            chars = sorted(page.chars, key=lambda c: (c["top"], c["x0"]))
+            if not chars:
+                pages_out.append(f"--- Page {page_num} ---\n")
+                continue
+
+            # Group chars into lines
+            lines = []
+            current_line = [chars[0]]
+            current_y = chars[0]["top"]
+            for c in chars[1:]:
+                if abs(c["top"] - current_y) <= y_tolerance:
+                    current_line.append(c)
+                else:
+                    lines.append(current_line)
+                    current_line = [c]
+                    current_y = c["top"]
+            lines.append(current_line)
+
+            left_lines, right_lines = [], []
+
+            for line in lines:
+                left_part, right_part = [], []
+                line = sorted(line, key=lambda c: c["x0"])
+                i = 0
+                while i < len(line):
+                    c = line[i]
+                    if c["x0"] > right_start_threshold and not left_part:
+                        right_part.extend(line[i:])
+                        break
+                    if left_part:
+                        prev_c = left_part[-1]
+                        gap = c["x0"] - prev_c["x1"]
+                        if gap <= gap_threshold:
+                            left_part.append(c)
+                        else:
+                            right_part.extend(line[i:])
+                            break
+                    else:
+                        left_part.append(c)
+                    i += 1
+                if left_part:
+                    left_lines.append("".join(ch["text"] for ch in left_part))
+                if right_part:
+                    right_lines.append("".join(ch["text"] for ch in right_part))
+
+            def clean(lines):
+                return "\n".join(normalize_text(l) for l in lines if l.strip())
+
+            page_text = clean(left_lines)
+            if right_lines:
+                page_text += "\n\n" + clean(right_lines)
+            pages_out.append(f"--- Page {page_num} ---\n{page_text}\n")
+    return pages_out
+
 def normalize_and_redact(pdf_path):
     global counter
 
