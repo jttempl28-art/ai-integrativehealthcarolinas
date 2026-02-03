@@ -92,7 +92,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "redacted_" + file.name;
+        a.download = "redacted_" + file.name.replace(/\.[^/.]+$/, ".txt");
         a.click();
       } catch (err) {
         alert("Network error: " + err.message);
