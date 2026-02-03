@@ -201,11 +201,48 @@ def normalize_and_redact(pdf_path):
 
 
 # ---------------- Flask App ----------------
+
 app = Flask(__name__)
 CORS(app)
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 EMBEDDINGS_FILE = "embeddings.json"
+
+
+SYSTEM_PROMPT_FILE = "system_prompt.txt"
+
+# Load system prompt at startup (default if file doesn't exist)
+if os.path.exists(SYSTEM_PROMPT_FILE):
+    with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
+        system_prompt = f.read()
+else:
+    system_prompt = """You are IntegrativeHealthAI, a staff assistant for Integrative Health Carolinas.
+- Always be polite and professional.
+- Only reference information from uploaded, redacted documents.
+- Never reveal PII.
+- Keep answers concise and actionable.
+"""
+    with open(SYSTEM_PROMPT_FILE, "w", encoding="utf-8") as f:
+        f.write(system_prompt)
+
+# Endpoint to get current system prompt
+@app.route("/settings", methods=["GET"])
+def get_settings():
+    return jsonify({"system_prompt": system_prompt})
+
+# Endpoint to update system prompt
+@app.route("/settings", methods=["POST"])
+def update_settings():
+    global system_prompt
+    data = request.get_json()
+    new_prompt = data.get("system_prompt")
+    if not new_prompt:
+        return jsonify({"error": "No prompt provided"}), 400
+
+    system_prompt = new_prompt
+    with open(SYSTEM_PROMPT_FILE, "w", encoding="utf-8") as f:
+        f.write(system_prompt)
+    return jsonify({"success": True})
 
 # Load embeddings at startup
 if os.path.exists(EMBEDDINGS_FILE):
@@ -249,7 +286,9 @@ def chat():
         # 4️⃣ Send to GPT
         completion = client.chat.completions.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "system", "content": system_prompt},
+                     {"roles": "user", "content": prompt}
+          ]
         )
 
         return jsonify({"reply": completion.choices[0].message.content})
