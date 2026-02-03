@@ -235,21 +235,30 @@ def upload_file():
     uploaded_file.save(input_path)
 
     # Run your redaction code
-    try:
+       try:
+        # Try opening the PDF to ensure it’s valid
+        with pdfplumber.open(input_path) as pdf:
+            if not pdf.pages:
+                raise ValueError("PDF has no pages")
+
+        # Run your redaction pipeline
         redacted_text = normalize_and_redact(input_path)
-        redacted_filename = f"redacted_{uploaded_file.filename.rsplit('.', 1)[0]}.txt"
+
+        # Save as TXT
+        redacted_filename = f"redacted_{os.path.splitext(uploaded_file.filename)[0]}.txt"
         redacted_path = os.path.join(temp_dir, redacted_filename)
         with open(redacted_path, "w", encoding="utf-8") as f:
             f.write(redacted_text)
-    except Exception as e:
-        shutil.rmtree(temp_dir)
-        return jsonify({"error": str(e)}), 500
 
-    # Return redacted file
-    response = send_file(redacted_path, as_attachment=True)
+        # Return TXT file to user
+        response = send_file(redacted_path, as_attachment=True)
+    except Exception as e:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return jsonify({"error": f"Failed to process PDF: {str(e)}"}), 400
+
+    # Cleanup temp files
     shutil.rmtree(temp_dir, ignore_errors=True)
     return response
-
 # ---------------- Main ----------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
