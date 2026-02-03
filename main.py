@@ -4,26 +4,23 @@ import openai
 import os
 
 app = Flask(__name__)
-CORS(app)
-# OpenAI API key from Railway environment variable
+CORS(app)  # allow requests from GitHub Pages
+
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json()
-    user_message = data.get("message", "")
-    
-    if not user_message:
+    message = data.get("message", "")
+    if not message:
         return jsonify({"error": "No message provided"}), 400
-
     try:
-        response = openai.ChatCompletion.create(
+        # new API for openai>=1.0.0
+        response = openai.chat.completions.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": user_message}],
-            temperature=0.7
+            messages=[{"role": "user", "content": message}]
         )
-        reply = response.choices[0].message.content
-        return jsonify({"reply": reply})
+        return jsonify({"reply": response.choices[0].message.content})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
