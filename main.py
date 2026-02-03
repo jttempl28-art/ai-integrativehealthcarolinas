@@ -288,7 +288,7 @@ def chat():
         completion = openai.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "system", "content": system_prompt},
-                     {"roles": "user", "content": prompt}
+                     {"role": "user", "content": prompt}
           ]
         )
 
