@@ -204,61 +204,62 @@ def normalize_and_redact(pdf_path):
 app = Flask(__name__)
 CORS(app)
 
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+EMBEDDINGS_FILE = "embeddings.json"
 
-# GPT Chat endpoint
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.get_json()
-    message = data.get("message", "")
-    if not message:
-        return jsonify({"error": "No message provided"}), 400
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": message}]
-        )
-        return jsonify({"reply": response.choices[0].message.content})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# Load embeddings at startup
+if os.path.exists(EMBEDDINGS_FILE):
+    with open(EMBEDDINGS_FILE, "r", encoding="utf-8") as f:
+        embeddings = json.load(f)
+else:
+    embeddings = []
 
-# File Upload & Redaction
+def add_embedding(new_embedding):
+    embeddings.append(new_embedding)
+    with open(EMBEDDINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(embeddings, f, ensure_ascii=False, indent=2)
+
 @app.route("/upload", methods=["POST"])
 def upload_file():
     uploaded_file = request.files.get("file")
     if not uploaded_file:
         return jsonify({"error": "No file uploaded"}), 400
 
-    # Create temporary directory
     temp_dir = tempfile.mkdtemp()
     input_path = os.path.join(temp_dir, uploaded_file.filename)
     uploaded_file.save(input_path)
 
-    # Run your redaction code
     try:
-            # Try opening the PDF to ensure it’s valid
-        with pdfplumber.open(input_path) as pdf:
-            if not pdf.pages:
-                raise ValueError("PDF has no pages")
-    
-            # Run your redaction pipeline
+        # 1️⃣ Redact PDF
         redacted_text = normalize_and_redact(input_path)
-    
-            # Save as TXT
+
+        # 2️⃣ Create embedding
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=redacted_text
+        )
+        embedding_vector = response.data[0].embedding
+
+        # 3️⃣ Append to embeddings file
+        add_embedding({
+            "filename": uploaded_file.filename,
+            "text": redacted_text,
+            "embedding": embedding_vector
+        })
+
+        # 4️⃣ Return redacted text as TXT
         redacted_filename = f"redacted_{os.path.splitext(uploaded_file.filename)[0]}.txt"
         redacted_path = os.path.join(temp_dir, redacted_filename)
         with open(redacted_path, "w", encoding="utf-8") as f:
             f.write(redacted_text)
-    
-            # Return TXT file to user
-        response = send_file(redacted_path, as_attachment=True)
+
+        response_file = send_file(redacted_path, as_attachment=True)
     except Exception as e:
         shutil.rmtree(temp_dir, ignore_errors=True)
         return jsonify({"error": f"Failed to process PDF: {str(e)}"}), 400
-    
-        # Cleanup temp files
+
     shutil.rmtree(temp_dir, ignore_errors=True)
-    return response
+    return response_file
 # ---------------- Main ----------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
